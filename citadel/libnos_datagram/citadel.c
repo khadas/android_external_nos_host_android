@@ -24,7 +24,6 @@
 #include <getopt.h>
 #include <linux/types.h>
 #include <poll.h>
-#include <pthread.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -48,7 +47,6 @@ struct citadel_ioc_tpm_datagram {
 
 #define DEV_CITADEL "/dev/citadel0"
 
-static pthread_mutex_t in_buf_mutex = PTHREAD_MUTEX_INITIALIZER;
 static uint8_t in_buf[MAX_DEVICE_TRANSFER];
 static int read_datagram(void *ctx, uint32_t command, uint8_t *buf, uint32_t len) {
     struct citadel_ioc_tpm_datagram dg = {
@@ -76,30 +74,17 @@ static int read_datagram(void *ctx, uint32_t command, uint8_t *buf, uint32_t len
         return -E2BIG;
     }
 
-    /* Lock the in buffer while it is used for this transaction */
-    if (pthread_mutex_lock(&in_buf_mutex) != 0) {
-        ALOGE("%s: failed to lock in_buf_mutex: %s", __func__, strerror(errno));
-        return -errno;
-    }
-
     ret = ioctl(fd, CITADEL_IOC_TPM_DATAGRAM, &dg);
     if (ret < 0) {
         ALOGE("can't send spi message: %s", strerror(errno));
-        ret = -errno;
-        goto out;
+        return -errno;
     }
 
     memcpy(buf, in_buf, len);
 
-out:
-    if (pthread_mutex_unlock(&in_buf_mutex) != 0) {
-        ALOGE("%s: failed to unlock in_buf_mutex: %s", __func__, strerror(errno));
-        ret = -errno;
-    }
-    return ret;
+    return 0;
 }
 
-static pthread_mutex_t out_buf_mutex = PTHREAD_MUTEX_INITIALIZER;
 static uint8_t out_buf[MAX_DEVICE_TRANSFER];
 static int write_datagram(void *ctx, uint32_t command, const uint8_t *buf, uint32_t len) {
     struct citadel_ioc_tpm_datagram dg = {
@@ -126,27 +111,15 @@ static int write_datagram(void *ctx, uint32_t command, const uint8_t *buf, uint3
         return -E2BIG;
     }
 
-    /* Lock the out buffer while it is used for this transaction */
-    if (pthread_mutex_lock(&out_buf_mutex) != 0) {
-        ALOGE("%s: failed to lock out_buf_mutex: %s", __func__, strerror(errno));
-        return -errno;
-    }
-
     memcpy(out_buf, buf, len);
 
     ret = ioctl(fd, CITADEL_IOC_TPM_DATAGRAM, &dg);
     if (ret < 0) {
         ALOGE("can't send spi message: %s", strerror(errno));
-        ret = -errno;
-        goto out;
+        return -errno;
     }
 
-out:
-    if (pthread_mutex_unlock(&out_buf_mutex) != 0) {
-        ALOGE("%s: failed to unlock out_buf_mutex: %s", __func__, strerror(errno));
-        ret = -errno;
-    }
-    return ret;
+    return 0;
 }
 
 static int wait_for_interrupt(void *ctx, int msecs) {
